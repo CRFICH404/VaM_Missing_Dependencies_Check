@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import sys
 from zipfile import ZipFile
 
 def print_asset_list (asset_list):
@@ -105,18 +106,18 @@ def get_all_dependencies(var_names, root):
                 with ZipFile(var_path, "r") as zipped_file:
                     contents = zipped_file.namelist()
                     if "meta.json" in contents:
-                        meta = zipped_file.open("meta.json")
-                        try:
-                            json_data = json.load(meta)
-                        except json.decoder.JSONDecodeError:
-                            print(var_path + " has corrupt JSON")
-                        try:
-                            for dependency in json_data["dependencies"]:
-                                dependency = str(dependency).lstrip().rstrip()
-                                dep_author, dep_name, dep_version = str(dependency).lstrip().rstrip().split(".")
-                                add_dep_asset(dependencies, dep_author, dep_name, dep_version, dep_corrupt_data)
-                        except KeyError:
-                            print(var_path + " has no dependencies")
+                        with zipped_file.open("meta.json") as meta:
+                            try:
+                                json_data = json.load(meta)
+                                try:
+                                    for dependency in json_data["dependencies"]:
+                                        dependency = str(dependency).lstrip().rstrip()
+                                        dep_author, dep_name, dep_version = str(dependency).lstrip().rstrip().split(".")
+                                        add_dep_asset(dependencies, dep_author, dep_name, dep_version, dep_corrupt_data)
+                                except KeyError:
+                                    print(var_path + " has no dependencies")
+                            except json.decoder.JSONDecodeError:
+                                print(var_path + " has corrupt JSON")
                     else:
                         print(var_path + " has no meta.json")
             except FileNotFoundError:
@@ -211,47 +212,104 @@ def get_missing_dependencies(root):
 
 def check_for_repeated_installed_dependencies(root):
     print("Checking for repeated dependencies...")
-    for var_name in get_var_names(root):
-        ...
+    installed_var_names, faulty_var_names = get_var_names(root)
+    print_faulty_var_names(faulty_var_names)
+    repeating_vars = {}
+    faulty_dependencies = []
+    for author in installed_var_names:
+        for file in installed_var_names[author]:
+            if installed_var_names[author][file].__len__() > 1:
+                for version in sorted(installed_var_names[author][file]):
+                    add_asset(repeating_vars, author, file, version, faulty_dependencies)
+    print_faulty_var_names(faulty_dependencies)
+    return repeating_vars
 
 def check_for_outdated_dependencies(root):
     print("Checking for outdated dependencies...")
     var_names = get_var_names(root)
 
-if __name__ == "__main__":
-    isRunning = True
+def create_main_menu (root):
+    return dict(enumerate([{'function' : find_missing_dependencies, 'string' : 'Find missing dependencies', 'func_input' : root},
+                           {'function' : find_repeated_installed_dependencies, 'string' : 'Find repeated installed dependencies', 'func_input' : root},
+                           {'function' : remove_repeated_dependencies, 'string' : 'Remove repeated dependencies', 'func_input' : root},
+                           {'function' : exit_program, 'string' : 'Exit', 'func_input' : None}], start=1))
+
+def create_print_result_submenu (results):
+    return dict(enumerate([{'function': print_asset_list, 'string': 'Print organized by author, file', 'func_input': results},
+                           {'function': print_asset_list_for_search, 'string': 'Print formatted for search', 'func_input': results}], start=1))
+
+def create_remove_repeated_dependencies_submenu (results):
+    return dict(enumerate([{'function': remove_all_repeated_dependencies, 'string': 'Remove all repeated versions but latest version', 'func_input': results},
+                           {'function': safe_remove_repeated_dependencies, 'string': 'Safe remove only known to be \".latest\" dependencies', 'func_input': results}], start=1))
+
+def print_menu (menu_items):
+    print("_________________________________________________MENU_________________________________________________\n")
+    for k, function in menu_items.items():
+        print(f"({k}) {function['string']}")
+    print("_______________________________________________________________________________________________________")
+
+def run_submenu (menu_items):
+    print_menu(menu_items)
+    while True:
+        selection = int(input("Please select an option: "))
+        if selection not in menu_items:
+            print("Please select a valid option.")
+            continue
+        selected_value = menu_items[selection]['function']
+        if menu_items[selection]['func_input'] is None:
+            selected_value()
+            break
+        else:
+            selected_value(menu_items[selection]['func_input'])
+            break
+
+def run_menu (menu_items):
+    while True:
+        print_menu(menu_items)
+        selection = int(input("Please select an option: "))
+        if selection not in menu_items:
+            print("Please select a valid option.")
+            continue
+        selected_value = menu_items[selection]['function']
+        if menu_items[selection]['func_input'] is None:
+            selected_value()
+        else:
+            selected_value(menu_items[selection]['func_input'])
+
+def find_missing_dependencies(root):
+    missing_dep = get_missing_dependencies(root)
+    if input("Print missing dependencies? (y/n): ").lower() == "y":
+        run_menu(create_print_result_submenu(missing_dep))
+
+def find_repeated_installed_dependencies(root):
+    repeated_installed_vars = check_for_repeated_installed_dependencies(root)
+    if input("Print repeated dependencies? (y/n): ").lower() == "y":
+        run_submenu(create_print_result_submenu(repeated_installed_vars))
+
+def remove_repeated_dependencies(root):
+    repeated_installed_vars = check_for_repeated_installed_dependencies(root)
+    run_submenu(create_remove_repeated_dependencies_submenu(repeated_installed_vars))
+
+def safe_remove_repeated_dependencies(repeated_versions):
+    ...
+
+def remove_all_repeated_dependencies(repeated_versions):
+    ...
+
+def exit_program():
+    print("Exiting...")
+    sys.exit()
+
+def main():
+    # isRunning = True
     path = "G:\\VaM_1.20.77.9\\AddonPackages"
 
     if not os.path.exists(path):
         print("Directory '" + path + "' not found.")
-        exit(1)
+        sys.exit(1)
 
-    while isRunning:
-        print("_________________________________________________MENU_________________________________________________")
-        print("(1) Check for missing dependencies")
-        print("(2) Check for repeated installed dependencies")
-        print("(3) Check for outdated dependencies")
-        print("(4) Exit")
-        print("_______________________________________________________________________________________________________")
+    run_menu(create_main_menu(path))
 
-        match input("Type your choice: "):
-            case "1":
-                missing_dep = get_missing_dependencies(path)
-                if input("Print missing dependencies? (y/n): ").lower() == "y":
-                    print("(1) Print organized by author, file")
-                    print("(2) Print formatted for search")
-                    match input("Type your choice: "):
-                        case "1":
-                            print_asset_list(missing_dep)
-                        case "2":
-                            print_asset_list_for_search(missing_dep)
-                        case _:
-                            print("Not a valid choice.")
-            case "2":
-                check_for_repeated_installed_dependencies(path)
-            case "3":
-                check_for_outdated_dependencies(path)
-            case "4":
-                isRunning = False
-            case _:
-                print("Not yet implemented\\Invalid input.")
+
+if __name__ == "__main__":
+    main()
